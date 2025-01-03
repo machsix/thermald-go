@@ -1,6 +1,10 @@
 # Thermald-Go
 
-Thermald-Go  (aka: thermal daemon) is a thermal monitoring daemon that monitors the temperature of CPU, HDD, and NVMe.
+![GitHub release (latest by date)](https://img.shields.io/github/v/release/machsix/thermald-go)
+![GitHub](https://img.shields.io/github/license/machsix/thermald-go)
+![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/machsix/thermald-go/release.yml)
+
+Thermald-Go (aka: thermal daemon) is a thermal monitoring daemon that monitors the temperature of CPU, HDD, and NVMe.
 
 ## Installation
 
@@ -21,7 +25,7 @@ sudo dpkg -i thermald-go_<version>_<architecture>.deb
 To run thermald-go, you need to have root permission as the program calls `smartctl` and `nvme` to get HDD and NVMe temperatures.
 
 ```sh
-Usage: thermald-go [--daemon] [--port PORT] [--cache CACHE] [--endpoint ENDPOINT] [--version]
+Usage: thermald-go [--daemon] [--port PORT] [--cache CACHE] [--endpoint ENDPOINT] [--version] [--compatible]
 
 Options:
   --daemon, -d           Run as a daemon [default: false]
@@ -30,11 +34,12 @@ Options:
                          Cache duration in seconds [default: 60]
   --endpoint ENDPOINT, -e ENDPOINT
                          Endpoint for the HTTP server [default: /]
-  --version, -v          Print version and exit
+  --version, -V          Print version and exit
+  --compatible, -c       Compatible mode: using smartctl to check temperature [default: false]
   --help, -h             display this help and exit
 ```
 
-In non-daedaemon mode, you will get response like the following in STDOUT
+In non-daemon mode, the output will be displayed in STDOUT as shown below
 
 ```
 root@nas:/root/ # thermald-go 2>/dev/null
@@ -56,14 +61,61 @@ root@nas:/root/ # thermald-go 2>/dev/null
 ]
 ```
 
-In daemon mode, the HTTP reponse from http://localhost:7634 will be the thermal data.
+In daemon mode, the HTTP response from http://localhost:7634 will return the thermal data in JSON format.
+```JSON
+[
+  {
+    "type": "cpu",
+    "id": "thermal_zone0",
+    "model": "Intel(R) N100",
+    "temperature": 27.8,
+    "zone": "/sys/class/thermal/thermal_zone0/temp"
+  },
+  {
+    "type": "hdd",
+    "id": "Y5J3VB5C",
+    "model": "WDC WD140EDFZ-11A0VA0",
+    "temperature": 38,
+    "zone": "/dev/sda"
+  },
+]
+```
+
+If you use the [Homepage project](https://github.com/gethomepage/homepage), you can add the following service widget to `services.yaml`
+
+```yaml
+Thermald-Go:
+  icon: mdi-thermometer
+  href: http://nas.lan:7634
+  widget:
+    type: customapi
+    refreshInterval: 300
+    # If your docker uses host's network
+    # url: http://127.0.0.1:7634
+
+    # If you created a custom bridged network at 172.17.0.1/24
+    url: http://172.17.0.1:7634
+    display: block
+    mappings:
+      - field:
+          1: temperature
+        format: float
+        label: CPU
+        suffix: "\u2103"
+      - field:
+          2: temperature
+        suffix: "\u2103"
+        format: number
+        additionalField:
+          field:
+            2: model
+        label: sda
+```
 
 
 ## Dependencies
 
-Thermald-Go depends on the following packages on Debian:
-- `nvme-cli`
-- `smartmontools`
+Thermald-Go has zero dependencies as it uses [smart.go](https://github.com/anatol/smart.go) to read S.M.A.R.T. info. If you want to run the compatability mode, you need `smartmontools`.
 
 ## License
 
