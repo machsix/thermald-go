@@ -1,0 +1,40 @@
+#!/usr/bin/make -f
+CORE_VERSION := 1.0.0
+SHA         := $(shell git rev-parse --short HEAD)
+VERSION     ?= $(CORE_VERSION)-$(SHA)
+LINUX_ARCH	:= $(DEB_TARGET_ARCH)
+DEB_HOST_ARCH   := $(DEB_TARGET_ARCH)
+DISTRIBUTION    := $(shell lsb_release -sr)
+BUILD_NUMBER    := 2
+PACKAGEVERSION  := $(VERSION)-$(BUILD_NUMBER)~$(DISTRIBUTION)0
+OUTPUT_DIR	  := build/linux/$(LINUX_ARCH)
+
+# Debian calls it armhf, we call it arm.
+ifeq ($(DEB_TARGET_ARCH),armhf)
+    LINUX_ARCH=arm
+endif
+
+%:
+	dh_clean
+	dh $@ --with systemd
+
+override_dh_strip:
+	echo dh_strip
+
+override_dh_auto_clean:
+	rm -rf debian/thermald-go/usr/sbin
+
+override_dh_auto_test:
+override_dh_auto_build:
+	make VERSION=$(VERSION) LINUX_ARCH=$(LINUX_ARCH) OUTPUT_DIR=$(OUTPUT_DIR)
+
+override_dh_auto_install:
+	mkdir -p debian/thermald-go/usr/sbin
+	cp $(OUTPUT_DIR)/thermald-go debian/thermald-go/usr/sbin
+
+override_dh_gencontrol:
+	dh_gencontrol -- -v$(PACKAGEVERSION)
+
+.PHONY: package_version
+package_version:
+	@echo $(PACKAGEVERSION)

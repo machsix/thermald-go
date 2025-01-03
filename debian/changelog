@@ -1,0 +1,5 @@
+thermald-go (0-0) UNRELEASED; urgency=medium
+
+  * Package for Debian.
+
+ -- Machsix <machsix@github.com>  Fri, 03 Jan 2025 04:40:10 -0500

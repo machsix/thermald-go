@@ -1,0 +1,63 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
+
+      - name: Setup Go Version
+        run: echo "GO_VERSION=$(grep '^go' go.mod | awk '{print $2}')" >> $GITHUB_ENV
+
+      - name: Set up Go
+        uses: actions/setup-go@v5.2.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: "**/*.sum"
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y debhelper curl git
+
+      - name: Build linux packages
+        run: make -f Makefile_deb
+
+      - name: Get package permalink
+        run: |
+          date > release.txt
+          for file in $(ls -1 release/*.deb); do
+              echo "- ${file##*/}: `$(sha256sum ${file} | cut -d' ' -f1)`" >> release.txt
+          done
+          for file in $(ls -1 release/*.tgz); do
+              echo "- ${file##*/}: `$(sha256sum ${file} | cut -d' ' -f1)`" >> release.txt
+          done
+
+      - name: Deploy deb to Fury
+        env:
+          FURY_TOKEN: ${{ secrets.FURY_TOKEN }}
+        run: |
+          for file in $(ls -1 release/*.deb); do
+              curl -F "package=@$file"  https://${FURY_TOKEN}@push.fury.io/machsix/
+          done
+
+      - name: Create release by uploading all the files in release folder
+        uses: softprops/action-gh-release@v2.1.0
+        with:
+          files: release/*
+          token: ${{ secrets.GITHUB_TOKEN }}
+          body_path: release.txt
+          make_latest: true
+          draft: false
+          prerelease: false

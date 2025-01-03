@@ -1,0 +1,14 @@
+Source: thermald-go
+Section: utils
+Priority: optional
+Maintainer: machsix@github.com
+Build-Depends: debhelper (>= 9), autotools-dev, dh-autoreconf
+Standards-Version: 3.9.6
+Homepage: https://github.com/machsix/thermald-go
+
+Package: thermald-go
+Architecture: any
+Depends: nvme-cli, smartmontools
+Description: Thermal management daemon
+ This package contains a daemon that monitors and controls the temperature
+ of your system to prevent overheating.

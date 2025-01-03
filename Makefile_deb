@@ -1,0 +1,17 @@
+LINUX_ARCH:=amd64 armhf arm64
+
+.PHONY: all
+all:
+	for arch in $(LINUX_ARCH); do \
+			echo Building: linux/$$arch ;\
+			mkdir -p release; \
+			dpkg-buildpackage -us -uc -b --target-arch $$arch ;\
+			export DEB_TARGET_ARCH=$$arch; \
+			PACKAGEVERSION=$(shell make -f debian/rules package_version); \
+			echo Finsh: linux/$$arch-$${PACKAGEVERSION} ;\
+			mv ../thermald-go_$${PACKAGEVERSION}_$${arch}.deb release; \
+	done
+
+.PHONY: clean
+clean:
+	 dpkg-buildpackage -rfakeroot -Tclean

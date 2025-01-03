@@ -1,0 +1,25 @@
+[Unit]
+Description=Thermald-Go Daemon Service
+ConditionPathExists=/usr/sbin/thermald-go
+After=network.target
+
+[Service]
+Environment="PORT=7634" "CACHE_TIME=300" "END_POINT=/"
+ExecStart=/usr/sbin/thermald-go -d -t $CACHE_TIME -p $PORT -e $END_POINT
+ExecReload=/bin/kill -HUP $MAINPID
+ExecStop=/bin/kill -TERM $MAINPID
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+User=root
+LimitNOFILE=1024
+LimitNPROC=512
+TimeoutStartSec=30
+TimeoutStopSec=30
+ProtectSystem=full
+ProtectHome=yes
+ReadWritePaths=/dev /run /var /sys
+
+[Install]
+WantedBy=multi-user.target
