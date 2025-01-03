@@ -38,10 +38,10 @@ jobs:
         run: |
           date > release.txt
           for file in $(ls -1 release/*.deb); do
-              echo "- ${file##*/}: `$(sha256sum ${file} | cut -d' ' -f1)`" >> release.txt
+              echo "- ${file##*/}: \`$(sha256sum ${file} | cut -d' ' -f1)\`" >> release.txt
           done
           for file in $(ls -1 release/*.tgz); do
-              echo "- ${file##*/}: `$(sha256sum ${file} | cut -d' ' -f1)`" >> release.txt
+              echo "- ${file##*/}: \`$(sha256sum ${file} | cut -d' ' -f1)\`" >> release.txt
           done
 
       - name: Deploy deb to Fury
