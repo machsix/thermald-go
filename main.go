@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/alexflint/go-arg"
+	"github.com/anatol/smart.go"
 	"github.com/shirou/gopsutil/v4/cpu"
 )
 
@@ -25,6 +26,13 @@ const (
 	CPU DeviceType = iota
 	HDD
 	NVMe
+)
+
+type QueryMode int
+
+const (
+	CLI QueryMode = iota
+	API
 )
 
 func (dt DeviceType) String() string {
@@ -53,6 +61,9 @@ type TemperatureData struct {
 	Zone        string     `json:"zone"`
 }
 
+var getHDDTemperature func(string) (float64, error)
+var getNVMeTemperature func(string) (float64, error)
+
 func (t *TemperatureData) UpdateTemperature() error {
 	var err error
 	switch t.Type {
@@ -79,51 +90,63 @@ func NewTemperatureData(deviceType DeviceType, zone string) (*TemperatureData, e
 			cpuModel = cpuInfo[0].ModelName
 		}
 		dev = &TemperatureData{Type: deviceType, ID: zoneID, Model: cpuModel, Zone: zone}
-	case HDD:
-		output, err := getSMART(zone, []string{"-i"})
-		if err != nil {
-			return dev, err
-		}
+	case HDD, NVMe:
 		hddModel := "Unkown"
 		serialNumber := "Unkown"
-		nfieldFound := 0
-		scanner := bufio.NewScanner(strings.NewReader(output))
-		for scanner.Scan() {
-			line := scanner.Text()
-			if strings.Contains(line, "Serial Number") {
-				serialNumber = strings.TrimSpace(strings.Split(line, ":")[1])
-				nfieldFound++
+		if queryMode == CLI {
+			output, err := getSMART(zone, []string{"-i"})
+			if err != nil {
+				return dev, err
 			}
-			if strings.Contains(line, "Device Model") {
-				hddModel = strings.TrimSpace(strings.Split(line, ":")[1])
-				nfieldFound++
-			}
-			if nfieldFound == 2 {
-				break
-			}
-		}
-		dev = &TemperatureData{Type: deviceType, ID: serialNumber, Model: hddModel, Zone: zone}
-	case NVMe:
-		// get the model from the nvme device using nvme list command, find the line containing the string zone, set the 4th field as the model, and the third field as the zoneID
-		cmd := exec.Command("nvme", "list")
-		output, err := cmd.Output()
-		if err != nil {
-			return dev, fmt.Errorf("failed to execute nvme list command: %v", err)
-		}
-		scanner := bufio.NewScanner(strings.NewReader(string(output)))
-		for scanner.Scan() {
-			line := scanner.Text()
-			if strings.HasPrefix(line, zone) {
-				fields := strings.Fields(line)
-				dev = &TemperatureData{Type: deviceType, ID: fields[2], Model: fields[3], Zone: zone}
-				break
-			}
-		}
-		if dev == nil {
-			return dev, fmt.Errorf("failed to find nvme device %s", zone)
-		}
 
-		dev = &TemperatureData{Type: deviceType, ID: zone, Model: "NVMe", Zone: zone}
+			nfieldFound := 0
+			scanner := bufio.NewScanner(strings.NewReader(output))
+			for scanner.Scan() {
+				line := scanner.Text()
+				if strings.Contains(line, "Serial Number") {
+					serialNumber = strings.TrimSpace(strings.Split(line, ":")[1])
+					nfieldFound++
+				}
+				if strings.Contains(line, "Device Model") || strings.Contains(line, "Model Number") {
+					hddModel = strings.TrimSpace(strings.Split(line, ":")[1])
+					nfieldFound++
+				}
+				if nfieldFound == 2 {
+					break
+				}
+			}
+		} else {
+			if deviceType == HDD {
+				device, err := smart.OpenSata(zone)
+				if err != nil {
+					return dev, fmt.Errorf("failed to open device %s: %v", zone, err)
+				}
+				defer device.Close()
+				deviceInfo, err := device.Identify()
+				if err != nil {
+					return dev, fmt.Errorf("failed to get device info for %s: %v", zone, err)
+				}
+				hddModel = deviceInfo.ModelNumber()
+				serialNumber = deviceInfo.SerialNumber()
+			} else if deviceType == NVMe {
+				device, err := smart.OpenNVMe(zone)
+				if err != nil {
+					return dev, fmt.Errorf("failed to open device %s: %v", zone, err)
+				}
+				defer device.Close()
+				deviceInfo, _, err := device.Identify()
+				if err != nil {
+					return dev, fmt.Errorf("failed to get device info for %s: %v", zone, err)
+				}
+				hddModel = deviceInfo.ModelNumber()
+				serialNumber = deviceInfo.SerialNumber()
+
+				hddModel = strings.ReplaceAll(hddModel, "\u0000", "")
+				serialNumber = strings.ReplaceAll(serialNumber, "\u0000", "")
+			}
+		}
+		// print hddModel and serialNumber
+		dev = &TemperatureData{Type: deviceType, ID: serialNumber, Model: hddModel, Zone: zone}
 	default:
 		return dev, fmt.Errorf("unkown deviceType %v", deviceType)
 	}
@@ -157,7 +180,7 @@ func getSMART(drive string, args []string) (string, error) {
 	return string(output), nil
 }
 
-func getHDDTemperature(drive string) (float64, error) {
+func getHDDTemperatureCLI(drive string) (float64, error) {
 	output, err := getSMART(drive, []string{"-a"})
 	if err != nil {
 		return 0.0, err
@@ -205,19 +228,36 @@ func getHDDTemperature(drive string) (float64, error) {
 	return temp, nil
 }
 
-func getNVMeTemperature(device string) (float64, error) {
-	cmd := exec.Command("nvme", "smart-log", device)
-	output, err := cmd.Output()
+func getHDDTemperatureAPI(drive string) (float64, error) {
+	device, err := smart.Open(drive)
 	if err != nil {
-		return 0.0, fmt.Errorf("failed to execute nvme command: %v", err)
+		return 0.0, fmt.Errorf("failed to open device %s: %v", drive, err)
+	}
+	defer device.Close()
+
+	info, err := device.ReadGenericAttributes()
+	if err != nil {
+		return 0.0, fmt.Errorf("failed to read generic attributes for %s: %v", drive, err)
+	}
+	return float64(info.Temperature), nil
+}
+
+func getNVMeTemperatureCLI(drive string) (float64, error) {
+	output, err := getSMART(drive, []string{"-a"})
+	if err != nil {
+		return 0.0, err
 	}
 
-	re := regexp.MustCompile(`\d+(\.\d+)?`)
-	scanner := bufio.NewScanner(strings.NewReader(string(output)))
+	scanner := bufio.NewScanner(strings.NewReader(output))
+	re := regexp.MustCompile(`^\d+(\.\d+)?`)
 	for scanner.Scan() {
 		line := scanner.Text()
+		if !strings.Contains(line, ":") {
+			continue
+		}
 		parts := strings.SplitN(line, ":", 2)
 		if len(parts) > 1 && strings.Contains(strings.ToLower(parts[0]), "temperature") {
+			parts[1] = strings.TrimSpace(parts[1])
 			match := re.FindString(parts[1])
 			temp, err := strconv.ParseFloat(match, 64)
 			if err == nil {
@@ -225,7 +265,21 @@ func getNVMeTemperature(device string) (float64, error) {
 			}
 		}
 	}
-	return 0.0, fmt.Errorf("failed to find temperature for nvme %s", device)
+	return 0.0, fmt.Errorf("failed to find temperature for nvme %s", drive)
+}
+
+func getNVMeTemperatureAPI(drive string) (float64, error) {
+	device, err := smart.OpenNVMe(drive)
+	if err != nil {
+		return 0.0, fmt.Errorf("failed to open device %s: %v", drive, err)
+	}
+	defer device.Close()
+
+	info, err := device.ReadGenericAttributes()
+	if err != nil {
+		return 0.0, fmt.Errorf("failed to read generic attributes for %s: %v", drive, err)
+	}
+	return float64(info.Temperature), nil
 }
 
 func findDevices() (int, map[DeviceType][]string, error) {
@@ -268,9 +322,11 @@ var (
 		Port          int    `arg:"-p" help:"Port number" default:"7634"`
 		CacheDuration int    `arg:"--cache,-t" help:"Cache duration in seconds" default:"60"`
 		EndPoint      string `arg:"--endpoint,-e" help:"Endpoint for the HTTP server" default:"/"`
-		Version       bool   `arg:"-v" help:"Print version and exit"`
+		Version       bool   `arg:"-V" help:"Print version and exit"`
+		Compatible    bool   `arg:"-c" help:"Compatible mode: using smartctl to check temperature" default:"false"`
 	}
-	Version string = "dev"
+	Version   string    = "dev"
+	queryMode QueryMode = API
 )
 
 func infoHandler(w http.ResponseWriter, r *http.Request) {
@@ -354,16 +410,16 @@ func infoHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Printf("FROM %s: %s [cache: %s]\n", clientEnd, r.URL.Path, time.Unix(ctx.lastCacheTime, 0).Format("2006-01-02 15:04:05"))
 }
 
-// create a wrapper function of
-
 func main() {
-	// Parse command-line arguments
-
 	// exit the program if the user is not sudoer
 	if os.Geteuid() != 0 {
 		fmt.Fprintf(os.Stderr, "Error: This program requires root privileges\n")
-		os.Exit(1)
+		fmt.Fprintf(os.Stderr, "Warning: smartctl command not found, falling back to API mode\n")
+		queryMode = API
 	}
+
+	getHDDTemperature = getHDDTemperatureAPI
+	getNVMeTemperature = getNVMeTemperatureAPI
 
 	// exit if the program is not run on linux
 	if runtime.GOOS != "linux" {
@@ -371,14 +427,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// check if smartctl and nvme commands are available
-	if _, err := exec.LookPath("smartctl"); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: smartctl command not found, HDD temperature will not be available\n")
-	}
-	if _, err := exec.LookPath("nvme"); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: nvme command not found, NVMe temperature will not be available\n")
-	}
-
+	// Parse command-line arguments
 	arg.MustParse(&args)
 	ctx = Context{
 		tempDB:        nil,
@@ -399,6 +448,18 @@ func main() {
 		os.Exit(0)
 	}
 
+	// check if smartctl and nvme commands are available
+	if args.Compatible {
+		if _, err := exec.LookPath("smartctl"); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: smartctl command not found. "+
+				"Failed to run compatible mode. Exiting...\n")
+			os.Exit(1)
+		}
+		queryMode = CLI
+		getHDDTemperature = getHDDTemperatureCLI
+		getNVMeTemperature = getNVMeTemperatureCLI
+	}
+
 	fmt.Fprintf(debugWriter, "Daemon mode: %v\n", daemonMode)
 	fmt.Fprintf(debugWriter, "Port: %s\n", ctx.port)
 	fmt.Fprintf(debugWriter, "Cache duration: %d seconds\n", ctx.cacheDuration)
@@ -410,6 +471,7 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Initialize the temperature data
 	var wg sync.WaitGroup
 	tempChan := make(chan struct {
 		TemperatureData
@@ -420,10 +482,8 @@ func main() {
 		string
 	})
 
-	// Create TemperatureData objects for each device
 	iDevice := 0
 	for _, deviceType := range []DeviceType{CPU, HDD, NVMe} {
-		// if deviceType is not found in the devicesMap, skip it
 		devices, ok := devicesMap[deviceType]
 		if !ok {
 			continue
@@ -451,7 +511,6 @@ func main() {
 		}
 	}
 
-	// Close channels when all goroutines are done
 	go func() {
 		wg.Wait()
 		close(tempChan)
@@ -474,7 +533,6 @@ func main() {
 	nValidDevices := len(ctx.tempDB)
 	fmt.Fprintf(debugWriter, "Found %d devices, %d valid devices\n", nDevices, nValidDevices)
 
-	// Handle errors
 	for err := range errChan {
 		fmt.Fprintf(os.Stderr, "Error for %s: %v\n", err.string, err.error)
 	}

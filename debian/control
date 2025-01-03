@@ -8,7 +8,7 @@ Homepage: https://github.com/machsix/thermald-go
 
 Package: thermald-go
 Architecture: any
-Depends: nvme-cli, smartmontools
+Recommends: smartmontools
 Description: Thermal management daemon
  This package contains a daemon that monitors and controls the temperature
  of your system to prevent overheating.
