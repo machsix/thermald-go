@@ -8,13 +8,7 @@ Thermald-Go (aka: thermal daemon) is a thermal monitoring daemon that monitors t
 
 ## Installation
 
-To install thermald-go, you can use the provided Debian package. Ensure you have the necessary dependencies:
-
-```sh
-sudo apt-get install nvme-cli smartmontools
-```
-
-Then, install the thermald-go package:
+To install thermald-go, you can use the provided Debian package:
 
 ```sh
 sudo dpkg -i thermald-go_<version>_<architecture>.deb
